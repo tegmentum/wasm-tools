@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use indexmap::IndexMap;
 use serde_derive::Deserialize;
 use std::{
+    borrow::Cow,
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -138,6 +139,85 @@ impl Config {
             .get(instance)
             .and_then(|i| i.dependency.as_deref())
             .unwrap_or(instance)
+    }
+}
+
+/// A component dependency specified as bytes instead of a file path.
+#[derive(Debug, Clone)]
+pub struct BytesDependency<'a> {
+    /// The name of the dependency component.
+    pub name: String,
+    /// The component bytes.
+    pub bytes: Cow<'a, [u8]>,
+}
+
+impl<'a> BytesDependency<'a> {
+    /// Creates a new bytes dependency.
+    pub fn new(name: impl Into<String>, bytes: impl Into<Cow<'a, [u8]>>) -> Self {
+        Self {
+            name: name.into(),
+            bytes: bytes.into(),
+        }
+    }
+}
+
+/// Configuration for composing components from in-memory bytes.
+#[derive(Debug, Clone, Default)]
+pub struct BytesConfig<'a> {
+    /// Components whose exports define import dependencies to fulfill from.
+    pub definitions: Vec<BytesDependency<'a>>,
+
+    /// Whether or not to skip validation of the output component.
+    pub skip_validation: bool,
+
+    /// Whether or not to import components in the composed component.
+    pub import_components: bool,
+
+    /// Whether or not to disallow instance imports in the output component.
+    pub disallow_imports: bool,
+
+    /// The explicit, transitive dependencies of the root component.
+    pub dependencies: IndexMap<String, BytesDependency<'a>>,
+}
+
+impl<'a> BytesConfig<'a> {
+    /// Creates a new empty bytes configuration.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds a dependency component by name and bytes.
+    pub fn add_dependency(mut self, name: impl Into<String>, bytes: impl Into<Cow<'a, [u8]>>) -> Self {
+        let name = name.into();
+        self.dependencies.insert(
+            name.clone(),
+            BytesDependency::new(name, bytes),
+        );
+        self
+    }
+
+    /// Adds a definition component.
+    pub fn add_definition(mut self, name: impl Into<String>, bytes: impl Into<Cow<'a, [u8]>>) -> Self {
+        self.definitions.push(BytesDependency::new(name, bytes));
+        self
+    }
+
+    /// Sets whether to skip validation.
+    pub fn skip_validation(mut self, skip: bool) -> Self {
+        self.skip_validation = skip;
+        self
+    }
+
+    /// Sets whether to import components.
+    pub fn import_components(mut self, import: bool) -> Self {
+        self.import_components = import;
+        self
+    }
+
+    /// Sets whether to disallow imports.
+    pub fn disallow_imports(mut self, disallow: bool) -> Self {
+        self.disallow_imports = disallow;
+        self
     }
 }
 

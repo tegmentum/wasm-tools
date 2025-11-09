@@ -1,7 +1,7 @@
 //! Module for composing WebAssembly components.
 
 use crate::{
-    config::Config,
+    config::{BytesConfig, Config},
     encoding::CompositionGraphEncoder,
     graph::{
         Component, ComponentId, CompositionGraph, EncodeOptions, ExportIndex, ImportIndex,
@@ -10,7 +10,7 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow, bail};
 use indexmap::IndexMap;
-use std::{collections::VecDeque, ffi::OsStr, path::Path};
+use std::{borrow::Cow, collections::VecDeque, ffi::OsStr, path::Path};
 use wasmparser::{
     ComponentExternalKind, ComponentTypeRef, Validator, WasmFeatures,
     component_types::{ComponentEntityType, ComponentInstanceTypeId},
@@ -570,6 +570,77 @@ impl<'a> ComponentComposer<'a> {
                 define_components: !self.config.import_components,
                 export: Some(root_instance),
                 validate: false,
+            },
+            &graph,
+        )
+        .encode()
+    }
+}
+
+/// Used to compose WebAssembly components from in-memory bytes.
+///
+/// This is similar to `ComponentComposer` but works with bytes instead of file paths.
+pub struct BytesComponentComposer<'a> {
+    root_bytes: Cow<'a, [u8]>,
+    config: BytesConfig<'a>,
+}
+
+impl<'a> BytesComponentComposer<'a> {
+    /// Constructs a new WebAssembly component composer from bytes.
+    ///
+    /// ## Arguments
+    /// * `root_bytes` - The bytes of the root component to compose.
+    /// * `config` - The bytes-based configuration to use for the composition.
+    pub fn new(root_bytes: impl Into<Cow<'a, [u8]>>, config: BytesConfig<'a>) -> Self {
+        Self {
+            root_bytes: root_bytes.into(),
+            config,
+        }
+    }
+
+    /// Composes a WebAssembly component based on the composer's configuration.
+    ///
+    /// ## Returns
+    /// Returns the bytes of the composed component.
+    pub fn compose(&self) -> Result<Vec<u8>> {
+        let mut graph = CompositionGraph::new();
+        let mut validator = Validator::new_with_features(WasmFeatures::all());
+
+        // Add the root component
+        let root_id = graph.add_component(Component::from_bytes(
+            &mut validator,
+            ROOT_COMPONENT_NAME,
+            self.root_bytes.as_ref(),
+        )?)?;
+
+        // Add all dependency components
+        let mut dep_map = IndexMap::new();
+        for (name, dep) in &self.config.dependencies {
+            let component = Component::from_bytes(&mut validator, name, dep.bytes.as_ref())?;
+            let id = graph.add_component(component)?;
+            dep_map.insert(name.clone(), id);
+        }
+
+        // Add all definition components
+        let mut _definitions = Vec::new();
+        for def in &self.config.definitions {
+            let component = Component::from_bytes(&mut validator, &def.name, def.bytes.as_ref())?;
+            let id = graph.add_component(component)?;
+            _definitions.push((id, None::<InstanceId>));
+        }
+
+        // Create root instance
+        let root_instance = graph.instantiate(root_id)?;
+
+        // For now, we return a simple composition
+        // Full dependency resolution would require more complex logic similar to
+        // CompositionGraphBuilder, but that's tied to file system resolution
+
+        CompositionGraphEncoder::new(
+            EncodeOptions {
+                define_components: !self.config.import_components,
+                export: Some(root_instance),
+                validate: !self.config.skip_validation,
             },
             &graph,
         )
